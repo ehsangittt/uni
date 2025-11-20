@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>بازی نقطه زن</title>
+<style>
+body{margin:0;overflow:hidden;background:#000;font-family:sans-serif;cursor:none;}
+canvas{display:block;}
+#score,#life,#level{position:absolute;top:10px;font-size:20px;color:#fff;padding:5px 10px;background:rgba(0,0,0,0.5);border-radius:5px;}
+#score{left:10px;}#life{left:150px;}#level{left:290px;}
+#menu{position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;flex-direction:column;justify-content:center;align-items:center;color:white;font-size:28px;}
+.menu-btn{padding:10px 30px;margin:10px;font-size:24px;cursor:pointer;background:#444;border:none;color:#fff;border-radius:5px;}
+.menu-btn:hover{background:#666;}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="score">امتیاز: 0</div>
+<div id="life">جان: 3</div>
+<div id="level">مرحله: 1</div>
+<div id="menu">
+    <div>بازی نقطه زن</div>
+    <button class="menu-btn" id="startBtn">شروع بازی</button>
+    <button class="menu-btn" id="pauseBtn">توقف / ادامه</button>
+</div>
+
+<script>
+const canvas=document.getElementById("gameCanvas");
+const ctx=canvas.getContext("2d");
+canvas.width=window.innerWidth;
+canvas.height=window.innerHeight;
+
+let score=0,life=3,level=1,enemies=[],explosions=[],particles=[],barriers=[],hearts=[],multiShots=[];
+let enemySpeed=2,enemyInterval=2000;
+let gameRunning=false, enemySpawner;
+let multiShotActive=false, multiShotCount=0;
+
+// --- Crosshair ---
+let mouseX=canvas.width/2, mouseY=canvas.height/2;
+let shootEffect=0; // مقدار انیمیشن حلقه هنگام شلیک
+
+window.addEventListener("mousemove",(e)=>{mouseX=e.clientX; mouseY=e.clientY;});
+
+// --- صداها (نمونه کوتاه) ---
+const shootSound=new Audio("data:audio/wav;base64,UklGRiIAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=");
+const hitSound=new Audio("data:audio/wav;base64,UklGRiIAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=");
+const heartSound=new Audio("data:audio/wav;base64,UklGRiIAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=");
+const multiShotSound=new Audio("data:audio/wav;base64,UklGRiIAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=");
+
+// --- پس‌زمینه ستاره‌ها ---
+let stars=[];
+for(let i=0;i<150;i++) stars.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,size:Math.random()*2+1,speed:Math.random()*0.5+0.2});
+
+// --- موانع ---
+function createBarriers(){
+    barriers=[];
+    for(let i=0;i<5;i++){
+        const w=100,h=20,x=Math.random()*(canvas.width-100),y=Math.random()*(canvas.height/2)+canvas.height/4;
+        barriers.push({x,y,w,h});
+    }
+}
+function drawBarriers(){ctx.fillStyle="gray";barriers.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));}
+
+// --- ایتم‌ها مربعی ---
+function spawnHeart(){hearts.push({x:Math.random()*(canvas.width-30),y:Math.random()*(canvas.height/2)+50,size:30,time:500});}
+function spawnMultiShot(){multiShots.push({x:Math.random()*(canvas.width-30),y:Math.random()*(canvas.height/2)+50,size:30,time:500});}
+function drawHearts(){ctx.fillStyle="pink";hearts.forEach(h=>ctx.fillRect(h.x,h.y,h.size,h.size));}
+function drawMultiShots(){ctx.fillStyle="yellow";multiShots.forEach(m=>ctx.fillRect(m.x,m.y,m.size,m.size));}
+
+// --- دشمن با حرکت زیگزاگی ---
+function createEnemy(){
+    const type=Math.random();
+    let size=30,color="red",speed=enemySpeed,phase=Math.random()*Math.PI*2;
+    if(type<0.3){size=25;color="blue";speed=enemySpeed*1.2;}
+    else if(type<0.6){size=40;color="green";speed=enemySpeed*0.8;}
+    return {x:Math.random()*canvas.width,y:-50,size,color,speed,phase};
+}
+
+// --- شروع بازی ---
+const menu=document.getElementById("menu");
+const startBtn=document.getElementById("startBtn");
+const pauseBtn=document.getElementById("pauseBtn");
+
+function startGame(){
+    score=0;life=3;level=1,enemies=[];explosions=[];particles=[];hearts=[];multiShots=[];
+    enemySpeed=2;enemyInterval=2000; multiShotActive=false; multiShotCount=0;
+    document.getElementById("score").innerText="امتیاز: "+score;
+    document.getElementById("life").innerText="جان: "+life;
+    document.getElementById("level").innerText="مرحله: "+level;
+    menu.style.display="none";
+    gameRunning=true;
+    createBarriers();
+    if(enemySpawner) clearInterval(enemySpawner);
+    enemySpawner=setInterval(()=>{if(gameRunning) enemies.push(createEnemy());},enemyInterval);
+    setInterval(()=>{if(gameRunning) spawnHeart();},10000);
+    setInterval(()=>{if(gameRunning) spawnMultiShot();},15000);
+}
+function togglePause(){gameRunning=!gameRunning; pauseBtn.innerText=gameRunning?"توقف / ادامه":"ادامه بازی";}
+
+// --- تیراندازی ---
+window.addEventListener("click",(e)=>{
+    if(!gameRunning) return;
+    shootSound.currentTime=0; shootSound.play();
+    shootEffect=10; // فعال شدن انیمیشن حلقه نورانی هنگام شلیک
+    let shots = multiShotActive ? 3 : 1;
+    for(let s=0;s<shots;s++){
+        const offset=(s-1)*15; 
+        enemies=enemies.filter(enemy=>{
+            const dist=Math.hypot(e.clientX+offset-enemy.x,e.clientY-enemy.y);
+            if(dist<enemy.size){
+                score++; document.getElementById("score").innerText="امتیاز: "+score;
+                hitSound.currentTime=0; hitSound.play();
+                explosions.push({x:enemy.x,y:enemy.y,radius:0,max:enemy.size*3,color:enemy.color});
+                for(let i=0;i<12;i++){
+                    particles.push({x:enemy.x,y:enemy.y,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,r:Math.random()*3+1,color:enemy.color,life:40});
+                }
+                return false;
+            }
+            return true;
+        });
+    }
+    if(multiShotActive){multiShotCount--; if(multiShotCount<=0) multiShotActive=false;}
+});
+
+// --- کشیدن ---
+function drawEnemy(enemy){ctx.shadowColor=enemy.color; ctx.shadowBlur=15; ctx.fillStyle=enemy.color; ctx.beginPath(); ctx.arc(enemy.x,enemy.y,enemy.size,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;}
+function drawExplosion(ex){ctx.shadowColor=ex.color; ctx.shadowBlur=20; ctx.strokeStyle=ex.color; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(ex.x,ex.y,ex.radius,0,Math.PI*2); ctx.stroke(); ctx.shadowBlur=0;}
+function drawStars(){ctx.fillStyle="white";stars.forEach(s=>{ctx.fillRect(s.x,s.y,s.size,s.size); s.y+=s.speed; if(s.y>canvas.height){s.y=0;s.x=Math.random()*canvas.width;}});}
+
+// --- Crosshair رسم ---
+function drawCrosshair(){
+    // حلقه مرکزی
+    ctx.save();
+    ctx.translate(mouseX,mouseY);
+    ctx.strokeStyle="cyan";
+    ctx.shadowColor="cyan"; ctx.shadowBlur=10;
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.arc(0,0,20+shootEffect,0,Math.PI*2);
+    ctx.stroke();
+    ctx.shadowBlur=0;
+    // خطوط افقی و عمودی
+    ctx.beginPath();
+    ctx.moveTo(-25,0); ctx.lineTo(-10,0);
+    ctx.moveTo(10,0); ctx.lineTo(25,0);
+    ctx.moveTo(0,-25); ctx.lineTo(0,-10);
+    ctx.moveTo(0,10); ctx.lineTo(0,25);
+    ctx.stroke();
+    ctx.restore();
+    if(shootEffect>0) shootEffect-=0.5;
+}
+
+// --- بروزرسانی ---
+function update(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawStars();
+    drawBarriers();
+    drawHearts();
+    drawMultiShots();
+
+    if(gameRunning){
+        enemies.forEach(enemy=>{
+            enemy.y+=enemy.speed;
+            enemy.x+=Math.sin(enemy.phase)*3;
+            enemy.phase+=0.08;
+            drawEnemy(enemy);
+            barriers.forEach(b=>{
+                if(enemy.x+enemy.size>b.x && enemy.x-enemy.size<b.x+b.w &&
+                   enemy.y+enemy.size>b.y && enemy.y-enemy.size<b.y+b.h){
+                    enemy.speed*=-1; enemy.y-=enemy.speed;
+                }
+            });
+            if(enemy.y>canvas.height){
+                life--; document.getElementById("life").innerText="جان: "+life;
+                enemy.y=-50; enemy.x=Math.random()*canvas.width;
+            }
+        });
+        enemies=enemies.filter(e=>e.y<canvas.height+50);
+
+        explosions.forEach(ex=>{ex.radius+=3;});
+        explosions=explosions.filter(ex=>ex.radius<ex.max);
+        explosions.forEach(drawExplosion);
+
+        particles.forEach(p=>{ctx.shadowColor=p.color;ctx.shadowBlur=10;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill(); ctx.shadowBlur=0; p.x+=p.vx; p.y+=p.vy; p.life--;});
+        particles=particles.filter(p=>p.life>0);
+
+        // برخورد با آیتم‌ها
+        hearts.forEach((h,i)=>{if(Math.hypot(canvas.width/2 - h.x, canvas.height - h.y)<50){if(life<5) life++; heartSound.play(); hearts.splice(i,1);}});
+        multiShots.forEach((m,i)=>{if(Math.hypot(canvas.width/2 - m.x, canvas.height - m.y)<50){multiShotActive=true;multiShotCount=5; multiShotSound.play(); multiShots.splice(i,1);}});
+
+        if(life<=0){alert("بازی تمام شد! امتیاز شما: "+score); menu.style.display="flex"; gameRunning=false;}
+
+        if(score>=level*10){
+            level++; enemySpeed+=1; enemyInterval=Math.max(400,enemyInterval-150);
+            for(let i=0;i<level;i++) enemies.push(createEnemy());
+            if(level%2==0){const w=100,h=20,x=Math.random()*(canvas.width-100),y=Math.random()*(canvas.height/2)+canvas.height/4;barriers.push({x,y,w,h});}
+            clearInterval(enemySpawner);
+            enemySpawner=setInterval(()=>{if(gameRunning) enemies.push(createEnemy());},enemyInterval);
+            document.getElementById("level").innerText="مرحله: "+level;
+            alert("مرحله بعد! مرحله "+level);
+        }
+        document.getElementById("life").innerText="جان: "+life;
+    }
+
+    drawCrosshair();
+    requestAnimationFrame(update);
+}
+
+startBtn.addEventListener("click",startGame);
+pauseBtn.addEventListener("click",togglePause);
+update();
+</script>
+</body>
+</html>
